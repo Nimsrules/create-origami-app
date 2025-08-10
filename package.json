@@ -1,6 +1,6 @@
 {
   "name": "create-origami-app",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CLI to create a new Origami SaaS project",
   "main": "dist/index.js",
   "bin": {
