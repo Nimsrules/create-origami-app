@@ -22,43 +22,51 @@ export async function createProject(
   await fs.ensureDir(projectPath)
   spinner.succeed()
 
-  // Copy template files
+  // Clone template from GitHub
   spinner = ora('📋 Copying template files...').start()
-  const templatePath = path.join(__dirname, '..', 'templates', 'default')
-  await fs.copy(templatePath, projectPath)
-  spinner.succeed()
+  try {
+    // Clone the boilerplate repository
+    await execa(
+      'git',
+      [
+        'clone',
+        'https://github.com/nimsrules/origami-saas-boilerplate.git',
+        '.',
+      ],
+      { cwd: projectPath }
+    )
+
+    // Remove .git directory from cloned repo
+    await fs.remove(path.join(projectPath, '.git'))
+
+    spinner.succeed()
+  } catch (error) {
+    spinner.fail('Failed to download template')
+    throw new Error(
+      'Could not download template from GitHub. Please check your internet connection.'
+    )
+  }
 
   // Update package.json with project name
   spinner = ora('📝 Updating package.json...').start()
   const packageJsonPath = path.join(projectPath, 'package.json')
-  const packageJson = await fs.readJson(packageJsonPath)
-  packageJson.name = name
-  await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 })
-  spinner.succeed()
+
+  if (await fs.pathExists(packageJsonPath)) {
+    const packageJson = await fs.readJson(packageJsonPath)
+    packageJson.name = name
+    await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 })
+    spinner.succeed()
+  } else {
+    spinner.fail('package.json not found in template')
+    throw new Error('Invalid template: package.json not found')
+  }
 
   // Setup environment variables
   spinner = ora('🔧 Setting up environment variables...').start()
   await setupEnvironmentFiles(projectPath, supabaseConfig)
   spinner.succeed()
 
-  // Initialize git repository
-  if (initializeGit) {
-    spinner = ora('📚 Initializing git repository...').start()
-    try {
-      await execa('git', ['init'], { cwd: projectPath })
-      await execa('git', ['add', '.'], { cwd: projectPath })
-      await execa(
-        'git',
-        ['commit', '-m', 'Initial commit from create-origami-app'],
-        { cwd: projectPath }
-      )
-      spinner.succeed()
-    } catch (error) {
-      spinner.warn('Git initialization failed (git might not be installed)')
-    }
-  }
-
-  // Install dependencies
+  // Install dependencies first (before git init to avoid husky issues)
   if (installDependencies) {
     spinner = ora(
       `📦 Installing dependencies with ${packageManager}...`
@@ -79,26 +87,62 @@ export async function createProject(
           ? ['install']
           : ['install']
 
-      await execa(installCmd, installArgs, { cwd: projectPath })
+      await execa(installCmd, installArgs, {
+        cwd: projectPath,
+        stdio: 'pipe', // Suppress output to avoid clutter
+      })
       spinner.succeed()
     } catch (error) {
       spinner.fail(`Failed to install dependencies with ${packageManager}`)
       console.log(chalk.yellow(`\nYou can install them manually by running:`))
       console.log(chalk.white(`  cd ${name}`))
       console.log(chalk.white(`  ${packageManager} install`))
+      console.log(chalk.red(`\nError: ${error}`))
+      throw error // Re-throw to stop execution
     }
   }
 
-  // Setup husky hooks if git is initialized
+  // Initialize git repository (after dependency installation)
+  if (initializeGit) {
+    spinner = ora('📚 Initializing git repository...').start()
+    try {
+      await execa('git', ['init'], { cwd: projectPath })
+      await execa('git', ['add', '.'], { cwd: projectPath })
+      await execa(
+        'git',
+        ['commit', '-m', 'Initial commit from create-origami-app'],
+        { cwd: projectPath }
+      )
+      spinner.succeed()
+    } catch (error) {
+      spinner.warn('Git initialization failed (git might not be installed)')
+    }
+  }
+
+  // Setup husky hooks after both git init and dependency installation
   if (initializeGit && installDependencies) {
     spinner = ora('🪝 Setting up git hooks...').start()
     try {
-      await execa('npx', ['husky', 'install'], { cwd: projectPath })
-      await execa(
-        'npx',
-        ['husky', 'add', '.husky/pre-commit', 'npx lint-staged'],
-        { cwd: projectPath }
+      // Check if husky is available before trying to use it
+      await execa('npx', ['husky', 'install'], {
+        cwd: projectPath,
+        stdio: 'pipe',
+      })
+
+      // Only add pre-commit hook if lint-staged is in package.json
+      const packageJson = await fs.readJson(
+        path.join(projectPath, 'package.json')
       )
+      if (
+        packageJson.devDependencies?.['lint-staged'] ||
+        packageJson.dependencies?.['lint-staged']
+      ) {
+        await execa(
+          'npx',
+          ['husky', 'add', '.husky/pre-commit', 'npx lint-staged'],
+          { cwd: projectPath, stdio: 'pipe' }
+        )
+      }
       spinner.succeed()
     } catch (error) {
       spinner.warn('Git hooks setup failed')
@@ -128,8 +172,10 @@ NEXTAUTH_SECRET=your_nextauth_secret
 NEXT_PUBLIC_ANALYTICS_ID=your_analytics_id
 `
 
-  // Write .env.example
-  await fs.writeFile(envExamplePath, envContent)
+  // Write .env.example (don't overwrite if it exists from template)
+  if (!(await fs.pathExists(envExamplePath))) {
+    await fs.writeFile(envExamplePath, envContent)
+  }
 
   // Write .env.local with actual values if provided
   if (supabaseConfig) {
