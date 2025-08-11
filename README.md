@@ -88,13 +88,3 @@ During project creation, you can optionally configure Supabase:
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Copy your project URL and anon key from the project settings
 3. The CLI will automatically add them to your `.env.local` file
-
-## Support
-
-- 📖 [Documentation](https://github.com/yourusername/origami-docs)
-- 🐛 [Report Issues](https://github.com/yourusername/create-origami-app/issues)
-- 💬 [Discussions](https://github.com/yourusername/create-origami-app/discussions)
-
-## License
-
-MIT © [Your Name]
